@@ -1,0 +1,444 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fábrica de Tokens Web3 - MetaMask Importer</title>
+    <!-- Tailwind CSS para Design Responsivo e Moderno -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons para Ícones Elegantes -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap');
+        body {
+            font-family: 'Plus Jakarta Sans', sans-serif;
+            background-color: #030712;
+        }
+        .glow-blue {
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.15);
+        }
+        .glow-pink {
+            box-shadow: 0 0 30px rgba(236, 72, 153, 0.15);
+        }
+        .glow-purple {
+            box-shadow: 0 0 40px rgba(168, 85, 247, 0.2);
+        }
+    </style>
+</head>
+<body class="text-slate-100 min-h-screen flex flex-col justify-between selection:bg-purple-600 selection:text-white">
+
+    <!-- Notificação Flutuante Personalizada (Substitui o alert) -->
+    <div id="customToast" class="fixed bottom-5 right-5 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none">
+        <div class="bg-slate-900 border border-slate-800 text-slate-100 px-5 py-4 rounded-2xl shadow-2xl flex items-center gap-3 max-w-md">
+            <div id="toastIconContainer" class="p-2 rounded-xl bg-purple-500/10 text-purple-400">
+                <i id="toastIcon" data-lucide="info" class="w-5 h-5"></i>
+            </div>
+            <div>
+                <h4 id="toastTitle" class="font-bold text-sm text-white">Notificação</h4>
+                <p id="toastMessage" class="text-xs text-slate-400 mt-0.5">Mensagem do sistema.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cabeçalho -->
+    <header class="border-b border-slate-900 bg-slate-950/60 backdrop-blur-xl sticky top-0 z-40 px-4 py-4">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <div class="flex items-center gap-3">
+                <div class="p-2.5 bg-gradient-to-br from-purple-600 to-indigo-600 rounded-2xl shadow-lg shadow-purple-500/15">
+                    <i data-lucide="gem" class="w-6 h-6 text-white animate-pulse"></i>
+                </div>
+                <div>
+                    <h1 class="text-xl font-extrabold tracking-tight bg-gradient-to-r from-purple-400 via-indigo-300 to-blue-400 bg-clip-text text-transparent">
+                        Fábrica de Tokens Fictícios
+                    </h1>
+                    <p class="text-xs text-slate-500">Adicione ativos divertidos e sem valor à sua MetaMask real</p>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-3">
+                <div id="networkBadge" class="hidden px-3.5 py-1.5 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+                    Rede Ativa
+                </div>
+                <button id="btnConnect" onclick="connectWallet()" class="flex items-center gap-2 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-semibold px-5 py-2.5 rounded-xl transition-all duration-200 active:scale-95 text-sm shadow-lg shadow-purple-600/25">
+                    <i data-lucide="wallet" class="w-4 h-4"></i>
+                    Ligar MetaMask
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Conteúdo Principal -->
+    <main class="flex-grow max-w-6xl mx-auto w-full px-4 py-8 flex flex-col gap-8">
+        
+        <!-- Status da Carteira Conectada -->
+        <div id="walletCard" class="hidden bg-slate-950/50 border border-slate-900 rounded-3xl p-6 transition-all duration-300">
+            <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div class="flex items-center gap-4">
+                    <div class="w-12 h-12 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center">
+                        <i data-lucide="user-check" class="w-6 h-6 text-purple-400"></i>
+                    </div>
+                    <div>
+                        <span class="text-[10px] uppercase tracking-wider text-slate-500 font-bold">Endereço da sua Carteira</span>
+                        <p id="walletAddressDisplay" class="font-mono text-sm text-slate-200 truncate max-w-xs md:max-w-md select-all">0x00</p>
+                    </div>
+                </div>
+                <div class="bg-purple-950/20 border border-purple-900/30 px-4 py-2.5 rounded-2xl">
+                    <p class="text-xs text-purple-400 font-medium">Nota: Todos os tokens criados aqui são fictícios (Zero Value). Servem apenas para diversão e exibição na sua carteira.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Seção 1: Criação Personalizada (Crie o seu Próprio Token) -->
+        <section class="bg-gradient-to-b from-slate-950 to-slate-900/60 border border-slate-900 rounded-3xl p-6 md:p-8 glow-purple relative overflow-hidden">
+            <div class="absolute -top-12 -right-12 w-48 h-48 bg-purple-600/10 rounded-full blur-3xl pointer-events-none"></div>
+            
+            <div class="max-w-2xl">
+                <span class="px-3 py-1 rounded-full text-[10px] font-bold tracking-widest uppercase bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                    Estúdio de Criação
+                </span>
+                <h2 class="text-2xl md:text-3xl font-extrabold text-white tracking-tight mt-3">Desenhe o seu Token Fictício</h2>
+                <p class="text-slate-400 text-sm mt-2 leading-relaxed">
+                    Personalize as propriedades visuais abaixo para criar um token exclusivo. O MetaMask irá ler estes metadados e registá-los diretamente na sua carteira de forma segura.
+                </p>
+            </div>
+
+            <!-- Formulário de Criação -->
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mt-6">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1.5">Nome do Token</label>
+                    <input id="customName" type="text" placeholder="Ex: Super Ethereum" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:border-purple-500 transition-colors placeholder:text-slate-700">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-400 mb-1.5">Símbolo do Token</label>
+                    <input id="customSymbol" type="text" placeholder="Ex: SETH" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:border-purple-500 transition-colors placeholder:text-slate-700 font-bold uppercase">
+                </div>
+                <div class="md:col-span-2">
+                    <label class="block text-xs font-semibold text-slate-400 mb-1.5">URL da Imagem do Ícone (PNG ou SVG)</label>
+                    <input id="customImage" type="text" placeholder="https://exemplo.com/logo.png" value="https://cryptologos.cc/logos/ethereum-eth-logo.png" class="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-3 text-sm text-slate-200 focus:outline-none focus:border-purple-500 transition-colors placeholder:text-slate-700 font-mono">
+                </div>
+            </div>
+
+            <div class="mt-6 flex flex-col sm:flex-row items-center gap-4">
+                <button onclick="createAndImportCustomToken()" class="w-full sm:w-auto flex items-center justify-center gap-2 bg-gradient-to-r from-purple-600 via-indigo-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-bold px-8 py-4 rounded-xl transition-all duration-200 active:scale-95 shadow-lg shadow-purple-600/25 text-sm">
+                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                    Criar e Importar para MetaMask
+                </button>
+                <span class="text-xs text-slate-500 flex items-center gap-1">
+                    <i data-lucide="shield-check" class="w-4 h-4 text-emerald-500"></i> Sem custos de Gas da rede
+                </span>
+            </div>
+        </section>
+
+        <!-- Seção 2: Coleção de Tokens Prontos -->
+        <section class="space-y-6">
+            <div>
+                <h3 class="text-xl font-bold text-white tracking-tight flex items-center gap-2">
+                    <i data-lucide="grid" class="w-5 h-5 text-indigo-400"></i>
+                    Coleção de Tokens Prontos
+                </h3>
+                <p class="text-slate-400 text-sm mt-1">Selecione uma das opções abaixo criadas pela nossa comunidade fictícia para preencher o seu inventário visual no MetaMask.</p>
+            </div>
+
+            <!-- Grid de Tokens -->
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6" id="tokenGrid">
+                <!-- Os cards de tokens serão injetados dinamicamente por JS -->
+            </div>
+        </section>
+
+        <!-- Terminal de Logs / Consola Web3 -->
+        <div class="bg-slate-950 border border-slate-900 rounded-2xl p-5 font-mono text-xs">
+            <div class="flex items-center justify-between mb-3 pb-3 border-b border-slate-900">
+                <span class="text-slate-400 flex items-center gap-2">
+                    <span class="w-1.5 h-1.5 rounded-full bg-purple-500 animate-ping"></span>
+                    Terminal de Diagnóstico de Tokens
+                </span>
+                <span class="text-[10px] text-slate-500">Web3 API ativa</span>
+            </div>
+            <div id="consoleLogs" class="space-y-1.5 max-h-[120px] overflow-y-auto text-slate-400">
+                <div class="text-slate-600">&gt; Consola de eventos iniciada. Aguardando ligação à carteira...</div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- Rodapé -->
+    <footer class="border-t border-slate-900 bg-slate-950/30 py-6 text-center text-xs text-slate-500 px-4 mt-12">
+        <div class="max-w-6xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
+            <p>© 2026 Fábrica de Tokens Web3. Desenvolvido para fins de simulação criativa na Blockchain.</p>
+            <p class="flex items-center gap-1.5">
+                Segurança assegurada por <span class="text-purple-400 font-semibold">MetaMask API</span>
+            </p>
+        </div>
+    </footer>
+
+    <!-- Lógica Web3 -->
+    <script>
+        let userAddress = "";
+
+        // Lista de Tokens Divertidos pré-configurados
+        const presetTokens = [
+            {
+                name: "Million Ethereum",
+                symbol: "mETH",
+                address: "0x1c98aB15a96E374be8A2bAF803FF0Fd005179B75",
+                image: "https://cryptologos.cc/logos/ethereum-eth-logo.png",
+                description: "Simule possuir milhões de moedas Ether diretamente na rede real.",
+                badgeColor: "bg-amber-500/10 text-amber-400 border-amber-500/20",
+                buttonStyle: "from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-slate-950"
+            },
+            {
+                name: "Gold Billionaire Club",
+                symbol: "BILL",
+                address: "0x1234567890123456789012345678901234567890",
+                image: "https://cryptologos.cc/logos/tether-usdt-logo.png",
+                description: "Token feito para fingir estatuto de bilionário a quem consultar a sua carteira.",
+                badgeColor: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
+                buttonStyle: "from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white"
+            },
+            {
+                name: "Space Banana Token",
+                symbol: "BANANA",
+                address: "0xdeafbeefdeafbeefdeafbeefdeafbeefdeafbeef",
+                image: "https://cryptologos.cc/logos/banano-ban-logo.png",
+                description: "Criado especialmente para os amantes de memes espaciais e DeFi criativo.",
+                badgeColor: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20",
+                buttonStyle: "from-yellow-500 to-amber-500 hover:from-yellow-400 hover:to-amber-400 text-slate-950"
+            },
+            {
+                name: "Cyber Doge 2.0",
+                symbol: "CDOGE",
+                address: "0x9999999999999999999999999999999999999999",
+                image: "https://cryptologos.cc/logos/dogecoin-doge-logo.png",
+                description: "A nova geração do cão mais famoso da internet na blockchain do Ethereum.",
+                badgeColor: "bg-pink-500/10 text-pink-400 border-pink-500/20",
+                buttonStyle: "from-pink-600 to-rose-600 hover:from-pink-500 hover:to-rose-500 text-white"
+            },
+            {
+                name: "Infinite Pizza",
+                symbol: "PIZZA",
+                address: "0x1111111111111111111111111111111111111111",
+                image: "https://cdn-icons-png.flaticon.com/512/1404/1404945.png",
+                description: "Uma homenagem ao famoso Pizza Day do Bitcoin, agora na sua carteira Ethereum.",
+                badgeColor: "bg-orange-500/10 text-orange-400 border-orange-500/20",
+                buttonStyle: "from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white"
+            },
+            {
+                name: "Hyper Diamond",
+                symbol: "HDIM",
+                address: "0x8888888888888888888888888888888888888888",
+                image: "https://cdn-icons-png.flaticon.com/512/1205/1205166.png",
+                description: "Mantenha as suas mãos de diamante (diamond hands) visíveis diretamente no MetaMask.",
+                badgeColor: "bg-blue-500/10 text-blue-400 border-blue-500/20",
+                buttonStyle: "from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white"
+            }
+        ];
+
+        // Inicialização do Portal
+        document.addEventListener("DOMContentLoaded", () => {
+            lucide.createIcons();
+            renderPresetTokens();
+            checkMetaMask();
+        });
+
+        // Mostrar Toast Customizado
+        function showToast(title, message, type = "info") {
+            const toast = document.getElementById("customToast");
+            const toastTitle = document.getElementById("toastTitle");
+            const toastMessage = document.getElementById("toastMessage");
+            const iconContainer = document.getElementById("toastIconContainer");
+            const icon = document.getElementById("toastIcon");
+
+            toastTitle.innerText = title;
+            toastMessage.innerText = message;
+
+            // Ajustar cores baseadas no tipo de notificação
+            if (type === "success") {
+                iconContainer.className = "p-2 rounded-xl bg-emerald-500/10 text-emerald-400";
+                icon.setAttribute("data-lucide", "check-circle-2");
+            } else if (type === "error") {
+                iconContainer.className = "p-2 rounded-xl bg-rose-500/10 text-rose-400";
+                icon.setAttribute("data-lucide", "x-circle");
+            } else {
+                iconContainer.className = "p-2 rounded-xl bg-purple-500/10 text-purple-400";
+                icon.setAttribute("data-lucide", "info");
+            }
+
+            lucide.createIcons();
+
+            // Animação de Entrada
+            toast.classList.remove("translate-y-20", "opacity-0");
+            toast.classList.add("translate-y-0", "opacity-100");
+
+            setTimeout(() => {
+                // Animação de Saída
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-20", "opacity-0");
+            }, 4005);
+        }
+
+        // Escrever no console do ecrã
+        function addLog(text, type = "info") {
+            const consoleLogs = document.getElementById("consoleLogs");
+            const div = document.createElement("div");
+            
+            let color = "text-slate-400";
+            if (type === "success") color = "text-emerald-400";
+            if (type === "error") color = "text-rose-400";
+            if (type === "warning") color = "text-amber-400";
+
+            div.className = `${color} py-0.5 break-all`;
+            div.innerHTML = `<span class="text-slate-600">&gt;</span> ${text}`;
+            consoleLogs.appendChild(div);
+            consoleLogs.scrollTop = consoleLogs.scrollHeight;
+        }
+
+        // Renderizar os cartões dos tokens predefinidos na Grid
+        function renderPresetTokens() {
+            const grid = document.getElementById("tokenGrid");
+            grid.innerHTML = "";
+
+            presetTokens.forEach((token, index) => {
+                const card = `
+                    <div class="bg-slate-950/40 border border-slate-900 rounded-2xl p-5 flex flex-col justify-between gap-5 hover:border-slate-800 transition-all group">
+                        <div class="space-y-3">
+                            <div class="flex items-center justify-between">
+                                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase ${token.badgeColor}">
+                                    ${token.symbol}
+                                </span>
+                                <img src="${token.image}" alt="${token.name}" class="w-8 h-8 object-contain rounded-full bg-slate-900 p-1 border border-slate-800" onerror="this.src='https://cryptologos.cc/logos/ethereum-eth-logo.png'">
+                            </div>
+                            <div>
+                                <h4 class="font-bold text-white text-base">${token.name}</h4>
+                                <p class="text-slate-400 text-xs mt-1.5 leading-relaxed">${token.description}</p>
+                            </div>
+                        </div>
+
+                        <div class="space-y-3">
+                            <div class="bg-slate-950 p-3 rounded-xl border border-slate-900/60 font-mono text-[10px] text-slate-500">
+                                <p class="truncate">Contrato: <span class="text-slate-300">${token.address}</span></p>
+                            </div>
+                            <button onclick="importToken('${token.address}', '${token.symbol}', '${token.name}', '${token.image}')" class="w-full flex items-center justify-center gap-2 bg-gradient-to-r ${token.buttonStyle} font-bold px-4 py-3 rounded-xl transition-all duration-200 active:scale-95 text-xs">
+                                <i data-lucide="download" class="w-4 h-4"></i>
+                                Importar para o MetaMask
+                            </button>
+                        </div>
+                    </div>
+                `;
+                grid.innerHTML += card;
+            });
+            lucide.createIcons();
+        }
+
+        // Verificar a presença da carteira MetaMask
+        function checkMetaMask() {
+            if (typeof window.ethereum !== "undefined") {
+                addLog("MetaMask detetada. Pronta para ligação descentralizada.", "success");
+                document.getElementById("networkBadge").classList.remove("hidden");
+                
+                // Tratar mudanças de conta
+                window.ethereum.on('accountsChanged', handleAccounts);
+            } else {
+                addLog("Atenção: Instale a extensão do MetaMask para conseguir importar os tokens.", "warning");
+                showToast("MetaMask em falta", "Por favor, instale o MetaMask para interagir com o portal.", "error");
+            }
+        }
+
+        // Ligar a carteira MetaMask
+        async function connectWallet() {
+            if (typeof window.ethereum === "undefined") {
+                showToast("Erro de Ligação", "Não encontrámos o MetaMask instalado.", "error");
+                return;
+            }
+
+            try {
+                addLog("A solicitar ligação de contas ao MetaMask...");
+                const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
+                handleAccounts(accounts);
+            } catch (err) {
+                addLog("Pedido de conexão cancelado ou falhado: " + err.message, "error");
+                showToast("Conexão Cancelada", "A ligação à carteira foi rejeitada.", "error");
+            }
+        }
+
+        // Processar conta conectada
+        function handleAccounts(accounts) {
+            if (accounts.length === 0) {
+                addLog("Nenhuma conta selecionada no MetaMask.", "warning");
+                document.getElementById("walletCard").classList.add("hidden");
+                return;
+            }
+
+            userAddress = accounts[0];
+            document.getElementById("walletAddressDisplay").innerText = userAddress;
+            document.getElementById("walletCard").classList.remove("hidden");
+
+            // Atualizar Botão de Conexão
+            const btn = document.getElementById("btnConnect");
+            btn.innerHTML = `<i data-lucide="check-circle" class="w-4 h-4"></i> Ligado`;
+            btn.className = "flex items-center gap-2 bg-emerald-600 text-white font-semibold px-5 py-2.5 rounded-xl text-sm cursor-default pointer-events-none";
+            
+            addLog(`Sucesso: Carteira ativa ligada: ${userAddress}`, "success");
+            showToast("Ligado com Sucesso", "A sua carteira foi associada com sucesso.", "success");
+            lucide.createIcons();
+        }
+
+        // Função Genérica para Adicionar/Importar qualquer ERC-20 Customizado para o MetaMask
+        async function importToken(address, symbol, name, image) {
+            if (typeof window.ethereum === "undefined") {
+                showToast("Ação Bloqueada", "Instale o MetaMask para continuar.", "error");
+                return;
+            }
+
+            addLog(`A preparar registo de ${name} (${symbol}) no seu MetaMask...`);
+
+            try {
+                // Solicitação nativa do MetaMask para registar o token na carteira
+                const wasAdded = await window.ethereum.request({
+                    method: 'wallet_watchAsset',
+                    params: {
+                        type: 'ERC20',
+                        options: {
+                            address: address, // Endereço físico ou gerado ficticiamente
+                            symbol: symbol.toUpperCase(), // Símbolo de exibição do token
+                            decimals: 18, // Padrão recomendado
+                            image: image // URL do ícone correspondente
+                        },
+                    },
+                });
+
+                if (wasAdded) {
+                    addLog(`Sucesso: O token ${name} (${symbol}) foi adicionado com sucesso!`, "success");
+                    showToast("Token Importado!", `O ativo ${symbol} já está visível na sua carteira.`, "success");
+                } else {
+                    addLog(`Aviso: O utilizador cancelou a importação do token ${symbol}.`, "warning");
+                    showToast("Importação Cancelada", "O registo do token foi recusado.", "info");
+                }
+            } catch (error) {
+                addLog(`Erro ao importar o token: ${error.message}`, "error");
+                showToast("Erro na Importação", "Não foi possível registar o token.", "error");
+            }
+        }
+
+        // Criar e Importar Token Customizado do Utilizador
+        function createAndImportCustomToken() {
+            const name = document.getElementById("customName").value.trim();
+            const symbol = document.getElementById("customSymbol").value.trim();
+            const image = document.getElementById("customImage").value.trim();
+
+            if (!name || !symbol) {
+                showToast("Campos em Falta", "Por favor, defina um Nome e um Símbolo para o seu token.", "error");
+                return;
+            }
+
+            // Endereço gerado de forma aleatória/fictícia para garantir que o utilizador consiga simular o registo sem colisões
+            const pseudoAddress = "0x" + Array.from({length: 40}, () => Math.floor(Math.random()*16).toString(16)).join('');
+
+            addLog(`A gerar novo contrato fictício para o seu token: ${name}...`);
+            addLog(`Endereço gerado: ${pseudoAddress}`, "info");
+
+            importToken(pseudoAddress, symbol, name, image || "https://cryptologos.cc/logos/ethereum-eth-logo.png");
+        }
+    </script>
+</body>
+</html>
