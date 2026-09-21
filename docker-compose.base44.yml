@@ -1,0 +1,20 @@
+services:
+  web:
+    image: php:8.2-apache
+    container_name: hashweb-web
+    working_dir: /var/www/html
+    volumes:
+      - ./:/var/www/html
+    ports:
+      - "3000:80"
+    environment:
+      # Allow the preview's external hostname (sandbox id rotates)
+      APACHE_SERVER_NAME: localhost
+    # Enable PDO SQLite, fix bind-mount perms, disable .htaccess lookups, run Apache
+    command: >
+      sh -c "docker-php-ext-install pdo_sqlite > /dev/null 2>&1 || true
+      && chmod -R a+rX /var/www/html && chmod -R a+w /var/www/html
+      && printf '<Directory /var/www/html>\nAllowOverride None\nRequire all granted\n</Directory>\n' > /etc/apache2/conf-available/base44.conf
+      && a2enconf base44 > /dev/null 2>&1
+      && apache2-foreground"
+    restart: unless-stopped
