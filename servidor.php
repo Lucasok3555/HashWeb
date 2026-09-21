@@ -112,15 +112,29 @@ switch ($action) {
         $dir = siteDir($hash);
         mkdir($dir, 0777, true);
 
-        $indexContent = "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>"
-            . htmlspecialchars($name) . "</title>\n</head>\n<body>\n<h1>" . htmlspecialchars($name)
-            . "</h1>\n</body>\n</html>\n";
-        file_put_contents($dir . '/index.html', $indexContent);
-
         $stmt = $pdo->prepare('INSERT INTO sites (hash, name, created_at) VALUES (?, ?, ?)');
         $stmt->execute([$hash, $name, date('c')]);
 
         jsonResponse(['hash' => $hash, 'private_key' => $privateKey, 'name' => $name]);
+    }
+
+    case 'import_site': {
+        $name = trim($_POST['name'] ?? '');
+        $privateKey = $_POST['private_key'] ?? '';
+        if ($name === '') jsonResponse(['error' => 'nome do site é obrigatório'], 400);
+        if (!$privateKey) jsonResponse(['error' => 'chave privada é obrigatória'], 400);
+        $hash = hash('sha256', $privateKey);
+        $dir = siteDir($hash);
+        $stmt = $pdo->prepare('SELECT hash FROM sites WHERE hash = ?');
+        $stmt->execute([$hash]);
+        if ($stmt->fetch()) {
+            if (!is_dir($dir)) mkdir($dir, 0777, true);
+            jsonResponse(['hash' => $hash, 'name' => $name, 'exists' => true]);
+        }
+        if (!is_dir($dir)) mkdir($dir, 0777, true);
+        $stmt = $pdo->prepare('INSERT INTO sites (hash, name, created_at) VALUES (?, ?, ?)');
+        $stmt->execute([$hash, $name, date('c')]);
+        jsonResponse(['hash' => $hash, 'name' => $name, 'exists' => false]);
     }
 
     case 'recover': {
@@ -281,6 +295,27 @@ switch ($action) {
             if (is_dir($srcFull)) copyDirRecursive($srcFull, $target); else copy($srcFull, $target);
         }
         jsonResponse(['ok' => true]);
+    }
+
+    case 'upload_file': {
+        $hash = $_POST['hash'] ?? '';
+        verifyOwner($hash, $_POST['private_key'] ?? '');
+        $path = $_POST['path'] ?? '/';
+        $name = trim($_POST['name'] ?? '');
+        $contentB64 = $_POST['content'] ?? '';
+        if ($name === '' || !preg_match('/^[^\/\\\\]+$/', $name)) jsonResponse(['error' => 'nome de arquivo inválido'], 400);
+        $full = safePath(siteDir($hash), rtrim($path, '/') . '/' . $name);
+        @mkdir(dirname($full), 0777, true);
+        file_put_contents($full, base64_decode($contentB64));
+        jsonResponse(['ok' => true]);
+    }
+
+    case 'get_file_b64': {
+        $hash = $_REQUEST['hash'] ?? '';
+        $path = $_REQUEST['path'] ?? '';
+        $full = safePath(siteDir($hash), $path);
+        if (!is_file($full)) jsonResponse(['error' => 'arquivo não encontrado'], 404);
+        jsonResponse(['content' => base64_encode(file_get_contents($full))]);
     }
 
     default:

@@ -22,3 +22,12 @@ Health check: `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/` â†
 ## How to verify
 - Frontend loads: `curl -s http://localhost:3000/` returns the HashWeb HTML.
 - API works: `curl -s -X POST "http://localhost:3000/servidor.php?action=create_site" -d "name=Test"` returns JSON with a hash and private key.
+- New endpoints: `import_site` (replication), `upload_file` (base64 file upload), `get_file_b64` (binary-safe retrieval).
+
+## Features
+- **Network replication**: "Sincronizar rede" button copies all site files to all servers in the list. Files are stored with obfuscated (scrambled) paths keyed by the private key, so the server operator can't read the real folder structure.
+- **Path obfuscation**: Client-side `scramblePath`/`descramblePath` (XOR + base64url, keyed by private key). The file manager always scrambles paths before sending to the server; the page viewer tries scrambled then falls back to plain paths.
+- **File upload**: "Upload" button asks for file or folder; folder uploads preserve structure via `webkitdirectory`.
+- **Full-screen editor**: The code editor modal covers the entire viewport.
+- **Loading indicator**: Spinner shows when opening the file manager.
+- **Script/URL fixes**: `<script src>` in rendered pages resolves relative to the hash-based folder path; folder URLs (`hash/folder/page.html`) are supported.
