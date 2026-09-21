@@ -182,6 +182,16 @@
     max-width:90vw; text-align:center;
   }
 
+  /* ---------- Editor tela cheia ---------- */
+  .modal.fullscreen{ width:100vw; max-width:100vw; height:100vh; max-height:100vh; border-radius:0; border:none; }
+  .modal.fullscreen .modal-body{ flex:1; min-height:0; }
+  .modal.fullscreen .modal textarea{ flex:1; min-height:0; height:100%; resize:none; }
+
+  /* ---------- Loading ---------- */
+  .fm-loading{ display:flex; align-items:center; justify-content:center; padding:40px; color:var(--text-dim); gap:10px; font-size:13px; }
+  .fm-loading .spinner{ width:18px; height:18px; border:2px solid var(--neon-dim); border-top-color:var(--neon); border-radius:50%; animation:spin 1s linear infinite; }
+  @keyframes spin{ to{ transform:rotate(360deg); } }
+
   /* ---------- Celular ---------- */
   @media (max-width: 640px){
     header{ padding:8px 10px; gap:8px; flex-wrap:wrap; }
@@ -289,10 +299,12 @@
       <span class="site-title" id="fm-site-name">—</span>
       <button class="btn small" id="btn-nova-pasta">+ Pasta</button>
       <button class="btn small" id="btn-novo-arquivo">+ Arquivo</button>
+      <button class="btn small" id="btn-upload">↑ Upload</button>
+      <button class="btn small pink" id="btn-sync-rede">⟲ Sincronizar rede</button>
       <button class="btn small pink" id="btn-fm-voltar">Voltar</button>
     </div>
     <div class="breadcrumb" id="fm-breadcrumb"></div>
-    <div id="file-list"></div>
+    <div id="file-list"><div class="fm-loading"><div class="spinner"></div>Carregando arquivos...</div></div>
   </section>
 
   <!-- ===== SERVIDORES ===== -->
@@ -352,6 +364,78 @@ function migrarSites(raw){
 
 function saveServers(){ localStorage.setItem(LS_SERVERS, JSON.stringify(servers)); }
 function saveSites(){ localStorage.setItem(LS_SITES, JSON.stringify(mySites)); }
+
+// ---------- ofuscação de caminhos (baralhar para o servidor) ----------
+function getScrambleKey(privateKey){
+  if(!privateKey) return null;
+  const key = [];
+  for(let i=0; i<privateKey.length; i+=2) key.push(parseInt(privateKey.substr(i,2),16));
+  return key;
+}
+function scrambleSeg(seg, key){
+  if(!key || !seg) return seg;
+  const dotIdx = seg.lastIndexOf('.');
+  const name = dotIdx>0 ? seg.substring(0,dotIdx) : seg;
+  const ext = dotIdx>0 ? seg.substring(dotIdx) : '';
+  let enc = '';
+  for(let i=0; i<name.length; i++) enc += String.fromCharCode(name.charCodeAt(i) ^ key[i % key.length]);
+  return btoa(enc).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'') + ext;
+}
+function descrambleSeg(seg, key){
+  if(!key || !seg) return seg;
+  const dotIdx = seg.lastIndexOf('.');
+  const encoded = dotIdx>0 ? seg.substring(0,dotIdx) : seg;
+  const ext = dotIdx>0 ? seg.substring(dotIdx) : '';
+  let b64 = encoded.replace(/-/g,'+').replace(/_/g,'/');
+  while(b64.length % 4) b64 += '=';
+  try {
+    const dec = atob(b64);
+    let out = '';
+    for(let i=0; i<dec.length; i++) out += String.fromCharCode(dec.charCodeAt(i) ^ key[i % key.length]);
+    return out + ext;
+  } catch(e){ return seg; }
+}
+function scramblePath(path, key){
+  if(!key) return path;
+  const parts = path.split('/').filter(Boolean);
+  return '/' + parts.map(s => scrambleSeg(s, key)).join('/');
+}
+function descramblePath(path, key){
+  if(!key) return path;
+  const parts = path.split('/').filter(Boolean);
+  return '/' + parts.map(s => descrambleSeg(s, key)).join('/');
+}
+function siteScrambleKey(hash){
+  const s = mySites.find(s => s.hash === hash);
+  return s ? getScrambleKey(s.private_key) : null;
+}
+
+// Wrapper que aplica ofuscação de caminhos nas chamadas da API do gerenciador
+function fmApi(server, action, params, method, explicitKey){
+  const key = explicitKey || (fmSite ? getScrambleKey(fmSite.private_key) : null);
+  const sp = Object.assign({}, params || {});
+  if(key){
+    if(sp.path) sp.path = scramblePath(sp.path, key);
+    if(sp.dest) sp.dest = scramblePath(sp.dest, key);
+    if(sp.name) sp.name = scrambleSeg(sp.name, key);
+    if(sp.new_name) sp.new_name = scrambleSeg(sp.new_name, key);
+  }
+  return apiOn(server, action, sp, method);
+}
+
+// Busca arquivo tentando path ofuscado (se houver chave) depois o path normal
+async function getFileSmart(server, hash, path, key){
+  const attempts = [];
+  if(key){ const sp = scramblePath(path, key); if(sp !== path) attempts.push(sp); }
+  attempts.push(path);
+  for(const tryPath of attempts){
+    try {
+      if(server) return {server, data: await apiOn(server, 'get_file', {hash, path: tryPath})};
+      return await apiAny('get_file', {hash, path: tryPath});
+    } catch(e){ /* tenta próximo */ }
+  }
+  throw new Error('arquivo não encontrado');
+}
 
 // Chama a API em UM servidor específico (usado quando já sabemos onde o site mora)
 function apiOn(server, action, params, method){
@@ -476,9 +560,8 @@ async function navegarPara(hash, path, opts){
   toast('Carregando página...');
   try{
     const server = siteServerConhecido(hash);
-    const result = server
-      ? {server, data: await apiOn(server, 'get_file', {hash, path})}
-      : await apiAny('get_file', {hash, path});
+    const key = siteScrambleKey(hash);
+    const result = await getFileSmart(server, hash, path, key);
 
     const html = await montarPaginaLocal(result.data.content, hash, path, result.server);
     const frame = document.getElementById('site-frame');
@@ -513,11 +596,24 @@ function resolverCaminho(baseDir, rel){
 }
 
 // Reescreve o HTML de uma página do site: embute CSS/JS internos (buscados
-// via API) e transforma <a href="pagina.html"> em navegação interna, sem
-// depender do navegador resolver URLs relativas contra o servidor real.
+// via API, com path ofuscado quando a chave privada é conhecida) e transforma
+// <a href="pagina.html"> em navegação interna, suportando pastas na URL.
 async function montarPaginaLocal(htmlText, hash, currentPath, server){
+  const key = siteScrambleKey(hash);
   const baseDir = currentPath.replace(/[^/]*$/, '') || '/';
   const doc = new DOMParser().parseFromString(htmlText, 'text/html');
+
+  // Busca conteúdo de arquivo, tentando path ofuscado depois o normal
+  async function getFileContent(path){
+    const attempts = [];
+    if(key){ const sp = scramblePath(path, key); if(sp !== path) attempts.push(sp); }
+    attempts.push(path);
+    for(const tryPath of attempts){
+      try { return (await apiOn(server, 'get_file', {hash, path: tryPath})).content; }
+      catch(e){ /* tenta próximo */ }
+    }
+    throw new Error('not found');
+  }
 
   doc.querySelectorAll('a[href]').forEach(a=>{
     const href = a.getAttribute('href');
@@ -538,21 +634,22 @@ async function montarPaginaLocal(htmlText, hash, currentPath, server){
     const href = link.getAttribute('href');
     if(enderecoExterno(href)) continue;
     try{
-      const data = await apiOn(server, 'get_file', {hash, path: resolverCaminho(baseDir, href)});
+      const css = await getFileContent(resolverCaminho(baseDir, href));
       const style = doc.createElement('style');
-      style.textContent = data.content;
+      style.textContent = css;
       link.replaceWith(style);
     }catch(e){ /* arquivo não encontrado — deixa o link como está */ }
   }
 
+  // Tags <script src> — o endereço é resolvido a partir do hash/pasta atual
   const scripts = Array.from(doc.querySelectorAll('script[src]'));
   for(const scr of scripts){
     const src = scr.getAttribute('src');
     if(enderecoExterno(src)) continue;
     try{
-      const data = await apiOn(server, 'get_file', {hash, path: resolverCaminho(baseDir, src)});
+      const js = await getFileContent(resolverCaminho(baseDir, src));
       const novo = doc.createElement('script');
-      novo.textContent = data.content;
+      novo.textContent = js;
       scr.replaceWith(novo);
     }catch(e){ /* arquivo não encontrado — deixa o script como está */ }
   }
@@ -580,9 +677,21 @@ function criarSite(){
   if(servers.length===0){ toast('Cadastre um servidor primeiro (aba Servidores).'); return; }
   // Novos sites são criados no primeiro servidor da lista.
   const server = servers[0];
-  apiOn(server, 'create_site', {name}, 'POST').then(data=>{
+  apiOn(server, 'create_site', {name}, 'POST').then(async data=>{
     mySites.push({hash:data.hash, name:data.name, private_key:data.private_key, server});
     saveSites();
+    // Criar index.html inicial (com path ofuscado)
+    const key = getScrambleKey(data.private_key);
+    const indexContent = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'
+      + escapeHtml(name) + '</title>\n</head>\n<body>\n<h1>' + escapeHtml(name)
+      + '</h1>\n</body>\n</html>\n';
+    try {
+      await fmApi(server, 'upload_file', {
+        hash: data.hash, private_key: data.private_key,
+        path: '/', name: 'index.html',
+        content: btoa(unescape(encodeURIComponent(indexContent)))
+      }, 'POST', key);
+    } catch(e){ /* non-fatal — o site existe mesmo sem index.html */ }
     document.getElementById('new-site-key').classList.add('show');
     const val = document.getElementById('new-site-key-val');
     val.textContent = data.private_key;
@@ -619,12 +728,14 @@ function renderSitesList(){
     div.innerHTML = `
       <span class="name">${escapeHtml(site.name)}</span>
       <button class="btn small" data-act="abrir">Arquivos</button>
+      <button class="btn small" data-act="sincronizar">Sincronizar</button>
       <button class="btn small" data-act="editar">Renomear</button>
       <button class="btn small" data-act="chave">Ver chave</button>
       <button class="btn small danger" data-act="apagar">Apagar</button>
       <div class="hash">${site.hash}<br><span style="color:var(--text-dim)">servidor: ${escapeHtml(site.server)}</span></div>
     `;
     div.querySelector('[data-act="abrir"]').addEventListener('click', ()=> openFileManager(site));
+    div.querySelector('[data-act="sincronizar"]').addEventListener('click', ()=> sincronizarRede(site));
     div.querySelector('[data-act="editar"]').addEventListener('click', ()=> renomearSite(site));
     div.querySelector('[data-act="chave"]').addEventListener('click', ()=>{
       navigator.clipboard.writeText(site.private_key);
@@ -669,16 +780,24 @@ function openFileManager(site){
   fmSite = site;
   fmPath = '/';
   document.getElementById('fm-site-name').textContent = site.name;
+  document.getElementById('file-list').innerHTML = '<div class="fm-loading"><div class="spinner"></div>Carregando arquivos...</div>';
   showView('arquivos');
   loadFiles();
 }
 document.getElementById('btn-fm-voltar').addEventListener('click', ()=> showView('hospedagem'));
 
 function loadFiles(){
-  apiOn(fmSite.server, 'list_files', {hash:fmSite.hash, path:fmPath}).then(data=>{
+  fmApi(fmSite.server, 'list_files', {hash:fmSite.hash, path:fmPath}).then(data=>{
+    const key = getScrambleKey(fmSite.private_key);
+    const items = (data.items || []).map(item => ({
+      ...item,
+      name: descrambleSeg(item.name, key)
+    }));
     renderBreadcrumb();
-    renderFileList(data.items);
-  }).catch(e=> toast('Erro: ' + e.message));
+    renderFileList(items);
+  }).catch(e=>{
+    document.getElementById('file-list').innerHTML = '<div class="empty-msg" style="padding:12px;">Erro: ' + escapeHtml(e.message) + '</div>';
+  });
 }
 
 function renderBreadcrumb(){
@@ -745,7 +864,7 @@ document.getElementById('btn-nova-pasta').addEventListener('click', ()=>{
     {label:'Criar', cls:'', onClick: ()=>{
       const name = document.getElementById('m-folder-name').value.trim();
       if(!name) return;
-      apiOn(fmSite.server, 'create_folder', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
+      fmApi(fmSite.server, 'create_folder', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
         closeModal(); loadFiles(); toast('Pasta criada.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -761,28 +880,28 @@ document.getElementById('btn-novo-arquivo').addEventListener('click', ()=>{
     {label:'Criar', cls:'', onClick: ()=>{
       const name = document.getElementById('m-file-name').value.trim();
       if(!name) return;
-      apiOn(fmSite.server, 'create_file', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
+      fmApi(fmSite.server, 'create_file', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
         closeModal(); loadFiles(); toast('Arquivo criado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
   ]);
 });
 
-// Editor de arquivo: mostra claramente que as alterações só valem depois de clicar em Salvar.
+// Editor de arquivo em tela cheia: as alterações só valem depois de Salvar.
 function abrirEditor(path){
-  apiOn(fmSite.server, 'get_file', {hash:fmSite.hash, path}).then(data=>{
+  fmApi(fmSite.server, 'get_file', {hash:fmSite.hash, path}).then(data=>{
     openModal('Editar: ' + path, `
-      <div class="msg ok show" id="m-editor-status">Alterações ainda não salvas ficam só nesta tela — clique em "Salvar alterações" para gravar no servidor.</div>
+      <div class="msg ok show" id="m-editor-status">Alterações ainda não salvas — clique em "Salvar alterações".</div>
       <textarea id="m-editor">${escapeHtml(data.content)}</textarea>
     `, [
       {label:'Cancelar', cls:'', onClick: closeModal},
       {label:'💾 Salvar alterações', cls:'', onClick: ()=>{
         const content = document.getElementById('m-editor').value;
-        apiOn(fmSite.server, 'save_file', {hash:fmSite.hash, private_key:fmSite.private_key, path, content}, 'POST').then(()=>{
+        fmApi(fmSite.server, 'save_file', {hash:fmSite.hash, private_key:fmSite.private_key, path, content}, 'POST').then(()=>{
           closeModal(); toast('Arquivo salvo no servidor.');
         }).catch(e=> toast('Erro: ' + e.message));
       }}
-    ]);
+    ], true);
   }).catch(e=> toast('Erro: ' + e.message));
 }
 
@@ -795,7 +914,7 @@ function renomearItem(path, currentName){
     {label:'Salvar', cls:'', onClick: ()=>{
       const newName = document.getElementById('m-rename').value.trim();
       if(!newName) return;
-      apiOn(fmSite.server, 'rename', {hash:fmSite.hash, private_key:fmSite.private_key, path, new_name:newName}, 'POST').then(()=>{
+      fmApi(fmSite.server, 'rename', {hash:fmSite.hash, private_key:fmSite.private_key, path, new_name:newName}, 'POST').then(()=>{
         closeModal(); loadFiles(); toast('Renomeado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -814,7 +933,7 @@ function moverOuCopiar(path, action){
     {label, cls:'', onClick: ()=>{
       const raw = document.getElementById('m-dest').value.trim();
       const dest = raw === '' ? fmPath : raw;
-      apiOn(fmSite.server, action, {hash:fmSite.hash, private_key:fmSite.private_key, path, dest}, 'POST').then(()=>{
+      fmApi(fmSite.server, action, {hash:fmSite.hash, private_key:fmSite.private_key, path, dest}, 'POST').then(()=>{
         closeModal(); loadFiles(); toast(label + ' concluído — pasta de destino: ' + dest);
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -825,12 +944,140 @@ function apagarItem(path){
   openModal('Apagar', `<div>Apagar "${escapeHtml(path)}"? Esta ação não pode ser desfeita.</div>`, [
     {label:'Cancelar', cls:'', onClick: closeModal},
     {label:'Apagar', cls:'danger', onClick: ()=>{
-      apiOn(fmSite.server, 'delete', {hash:fmSite.hash, private_key:fmSite.private_key, path}, 'POST').then(()=>{
+      fmApi(fmSite.server, 'delete', {hash:fmSite.hash, private_key:fmSite.private_key, path}, 'POST').then(()=>{
         closeModal(); loadFiles(); toast('Apagado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
   ]);
 }
+
+// ===================== UPLOAD =====================
+const fileInput = document.createElement('input');
+fileInput.type = 'file'; fileInput.multiple = true; fileInput.style.display = 'none';
+document.body.appendChild(fileInput);
+
+const folderInput = document.createElement('input');
+folderInput.type = 'file'; folderInput.setAttribute('webkitdirectory',''); folderInput.multiple = true; folderInput.style.display = 'none';
+document.body.appendChild(folderInput);
+
+function readFileAsBase64(file){
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+document.getElementById('btn-upload').addEventListener('click', ()=>{
+  openModal('Upload', `
+    <div class="field-lbl">O que você quer enviar?</div>
+    <div class="row" style="margin-top:8px;">
+      <button class="btn" id="m-upload-file" style="flex:1;">📄 Arquivo</button>
+      <button class="btn" id="m-upload-folder" style="flex:1;">📁 Pasta</button>
+    </div>
+  `, [{label:'Cancelar', cls:'', onClick: closeModal}]);
+  document.getElementById('m-upload-file').addEventListener('click', ()=>{ closeModal(); fileInput.click(); });
+  document.getElementById('m-upload-folder').addEventListener('click', ()=>{ closeModal(); folderInput.click(); });
+});
+
+fileInput.addEventListener('change', async ()=>{
+  const files = Array.from(fileInput.files);
+  if(files.length === 0) return;
+  toast('Enviando ' + files.length + ' arquivo(s)...');
+  for(const file of files){
+    try {
+      const base64 = await readFileAsBase64(file);
+      await fmApi(fmSite.server, 'upload_file', {
+        hash: fmSite.hash, private_key: fmSite.private_key,
+        path: fmPath, name: file.name, content: base64
+      }, 'POST');
+    } catch(e){ toast('Erro ao enviar ' + file.name + ': ' + e.message); }
+  }
+  fileInput.value = '';
+  loadFiles();
+  toast('Upload concluído.');
+});
+
+folderInput.addEventListener('change', async ()=>{
+  const files = Array.from(folderInput.files);
+  if(files.length === 0) return;
+  toast('Enviando pasta...');
+  for(const file of files){
+    const relPath = file.webkitRelativePath || file.name;
+    const sep = relPath.indexOf('/');
+    const subPath = sep >= 0 ? relPath.substring(sep + 1) : relPath;
+    const lastSlash = subPath.lastIndexOf('/');
+    const fileName = lastSlash >= 0 ? subPath.substring(lastSlash + 1) : subPath;
+    const dirPart = lastSlash >= 0 ? subPath.substring(0, lastSlash) : '';
+    const targetDir = dirPart ? joinPath(fmPath, dirPart) : fmPath;
+    try {
+      const base64 = await readFileAsBase64(file);
+      await fmApi(fmSite.server, 'upload_file', {
+        hash: fmSite.hash, private_key: fmSite.private_key,
+        path: targetDir, name: fileName, content: base64
+      }, 'POST');
+    } catch(e){ toast('Erro ao enviar ' + fileName + ': ' + e.message); }
+  }
+  folderInput.value = '';
+  loadFiles();
+  toast('Upload de pasta concluído.');
+});
+
+// ===================== REDE (replicação) =====================
+// Todos os arquivos do site são copiados para todos os servidores da lista.
+// O conteúdo das pastas fica ofuscado (baralhado) para o servidor.
+async function listAllFiles(server, hash, key){
+  async function recurse(path){
+    const scrambledPath = scramblePath(path, key);
+    const data = await apiOn(server, 'list_files', {hash, path: scrambledPath});
+    const items = data.items.map(item => ({
+      ...item,
+      realName: descrambleSeg(item.name, key),
+      realPath: joinPath(path, descrambleSeg(item.name, key))
+    }));
+    let files = [];
+    for(const item of items){
+      if(item.is_dir) files = files.concat(await recurse(item.realPath));
+      else files.push({path: item.realPath, name: item.realName});
+    }
+    return files;
+  }
+  return recurse('/');
+}
+
+async function sincronizarRede(site){
+  const otherServers = servers.filter(s => s !== site.server);
+  if(otherServers.length === 0){ toast('Não há outros servidores para replicar.'); return; }
+  const key = getScrambleKey(site.private_key);
+  toast('Listando arquivos...');
+  let files;
+  try { files = await listAllFiles(site.server, site.hash, key); }
+  catch(e){ toast('Erro ao listar arquivos: ' + e.message); return; }
+  if(files.length === 0){ toast('Site vazio — nada para replicar.'); return; }
+  for(const server of otherServers){
+    toast('Replicando para ' + server + '...');
+    try {
+      await apiOn(server, 'import_site', {name: site.name, private_key: site.private_key}, 'POST');
+      for(const file of files){
+        const scrambledPath = scramblePath(file.path, key);
+        const data = await apiOn(site.server, 'get_file_b64', {hash: site.hash, path: scrambledPath});
+        const dir = scrambledPath.replace(/[^/]*$/, '');
+        const name = scrambledPath.split('/').pop();
+        await apiOn(server, 'upload_file', {
+          hash: site.hash, private_key: site.private_key,
+          path: dir, name, content: data.content
+        }, 'POST');
+      }
+      toast('Replicado para ' + server);
+    } catch(e){ toast('Erro ao replicar para ' + server + ': ' + e.message); }
+  }
+  toast('Sincronização concluída para ' + otherServers.length + ' servidor(es).');
+}
+
+document.getElementById('btn-sync-rede').addEventListener('click', ()=>{
+  if(fmSite) sincronizarRede(fmSite);
+});
 
 // ===================== SERVIDORES =====================
 // Não existe mais "servidor ativo": o cliente usa TODOS os servidores da lista,
@@ -898,7 +1145,7 @@ function removerServidor(url){
 }
 
 // ===================== MODAL =====================
-function openModal(title, bodyHtml, buttons){
+function openModal(title, bodyHtml, buttons, fullscreen){
   document.getElementById('modal-title').textContent = title;
   document.getElementById('modal-body').innerHTML = bodyHtml;
   const foot = document.getElementById('modal-foot');
@@ -910,6 +1157,7 @@ function openModal(title, bodyHtml, buttons){
     btn.addEventListener('click', b.onClick);
     foot.appendChild(btn);
   });
+  document.querySelector('.modal').classList.toggle('fullscreen', !!fullscreen);
   document.getElementById('modal-bg').classList.add('show');
 }
 function closeModal(){ document.getElementById('modal-bg').classList.remove('show'); }
