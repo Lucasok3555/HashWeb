@@ -520,8 +520,9 @@ document.getElementById('btn-nav-inicio').addEventListener('click', ()=>{
 
 // Recebe cliques em links internos vindos de dentro do iframe (postMessage)
 window.addEventListener('message', function(e){
-  if(e.data && e.data.type === 'hashweb-nav' && navHash){
-    navegarPara(navHash, e.data.path);
+  if(e.data && e.data.type === 'hashweb-nav'){
+    const targetHash = e.data.hash || navHash;
+    if(targetHash) navegarPara(targetHash, e.data.path);
   }
 });
 
@@ -595,72 +596,200 @@ function resolverCaminho(baseDir, rel){
   return '/' + parts.join('/');
 }
 
-// Reescreve o HTML de uma página do site: embute CSS/JS internos (buscados
-// via API, com path ofuscado quando a chave privada é conhecida) e transforma
-// <a href="pagina.html"> em navegação interna, suportando pastas na URL.
+// Reescreve o HTML de uma página do site: embute CSS/JS/imagens e outros
+// recursos (buscados via API, com path ofuscado quando a chave privada é
+// conhecida). Endereços podem ser: caminho relativo (mesmo site), hash da
+// rede (outro site, 64 chars hex), ou URL da internet comum. Transforma
+// <a href> em navegação interna, suportando pastas e cross-site.
 async function montarPaginaLocal(htmlText, hash, currentPath, server){
   const key = siteScrambleKey(hash);
   const baseDir = currentPath.replace(/[^/]*$/, '') || '/';
   const doc = new DOMParser().parseFromString(htmlText, 'text/html');
 
-  // Busca conteúdo de arquivo, tentando path ofuscado depois o normal
-  async function getFileContent(path){
+  // Classifica um endereço de tag: internet, hash da rede, caminho relativo, ou ignorar
+  function parseAddr(addr){
+    addr = (addr || '').trim();
+    if(!addr || addr.startsWith('#') || /^(mailto:|tel:|javascript:|data:)/i.test(addr)) return {type:'skip'};
+    if(/^([a-z][a-z0-9+.-]*:)?\/\//i.test(addr)) return {type:'internet', url:addr};
+    const m = addr.match(/^([a-f0-9]{64})(\/.*)?$/i);
+    if(m) return {type:'hash', hash:m[1].toLowerCase(), path:m[2]||'/index.html'};
+    return {type:'relative', path:resolverCaminho(baseDir, addr)};
+  }
+
+  // Busca conteúdo de texto de um site (atual ou outro da rede), tentando
+  // path ofuscado depois o normal
+  async function fetchText(parsed){
+    let siteHash, siteServer, siteKey, path;
+    if(parsed.type === 'hash'){ siteHash = parsed.hash; siteServer = null; siteKey = siteScrambleKey(parsed.hash); path = parsed.path; }
+    else if(parsed.type === 'relative'){ siteHash = hash; siteServer = server; siteKey = key; path = parsed.path; }
+    else return null;
     const attempts = [];
-    if(key){ const sp = scramblePath(path, key); if(sp !== path) attempts.push(sp); }
+    if(siteKey){ const sp = scramblePath(path, siteKey); if(sp !== path) attempts.push(sp); }
     attempts.push(path);
     for(const tryPath of attempts){
-      try { return (await apiOn(server, 'get_file', {hash, path: tryPath})).content; }
-      catch(e){ /* tenta próximo */ }
+      try {
+        if(siteServer) return (await apiOn(siteServer, 'get_file', {hash:siteHash, path:tryPath})).content;
+        return (await apiAny('get_file', {hash:siteHash, path:tryPath})).data.content;
+      } catch(e){ /* tenta próximo */ }
     }
     throw new Error('not found');
   }
 
-  doc.querySelectorAll('a[href]').forEach(a=>{
-    const href = a.getAttribute('href');
-    if(enderecoExterno(href)){
-      if(href && /^([a-z][a-z0-9+.-]*:)?\/\//i.test(href)){
-        a.setAttribute('target', '_blank');
-        a.setAttribute('rel', 'noopener');
-      }
-      return;
+  // Busca conteúdo binário (base64) de um site (atual ou outro da rede)
+  async function fetchB64(parsed){
+    let siteHash, siteServer, siteKey, path;
+    if(parsed.type === 'hash'){ siteHash = parsed.hash; siteServer = null; siteKey = siteScrambleKey(parsed.hash); path = parsed.path; }
+    else if(parsed.type === 'relative'){ siteHash = hash; siteServer = server; siteKey = key; path = parsed.path; }
+    else return null;
+    const attempts = [];
+    if(siteKey){ const sp = scramblePath(path, siteKey); if(sp !== path) attempts.push(sp); }
+    attempts.push(path);
+    for(const tryPath of attempts){
+      try {
+        if(siteServer) return (await apiOn(siteServer, 'get_file_b64', {hash:siteHash, path:tryPath})).content;
+        return (await apiAny('get_file_b64', {hash:siteHash, path:tryPath})).data.content;
+      } catch(e){ /* tenta próximo */ }
     }
-    a.setAttribute('data-hw-path', resolverCaminho(baseDir, href));
-    a.removeAttribute('href');
-    a.style.cursor = 'pointer';
+    throw new Error('not found');
+  }
+
+  // Mime type a partir da extensão do arquivo
+  function mimeFromExt(filename){
+    const ext = (filename.split('.').pop()||'').toLowerCase();
+    const m = {
+      html:'text/html', css:'text/css', js:'application/javascript', mjs:'application/javascript',
+      png:'image/png', jpg:'image/jpeg', jpeg:'image/jpeg', gif:'image/gif', svg:'image/svg+xml',
+      webp:'image/webp', bmp:'image/bmp', ico:'image/x-icon', avif:'image/avif',
+      mp4:'video/mp4', webm:'video/webm', ogv:'video/ogg', mov:'video/quicktime',
+      mp3:'audio/mpeg', wav:'audio/wav', oga:'audio/ogg', m4a:'audio/mp4', aac:'audio/aac', flac:'audio/flac',
+      woff:'font/woff', woff2:'font/woff2', ttf:'font/ttf', otf:'font/otf',
+      json:'application/json', xml:'application/xml', txt:'text/plain', pdf:'application/pdf'
+    };
+    return m[ext] || 'application/octet-stream';
+  }
+
+  // ===== <a href> — navegação interna (mesmo site ou outro site da rede) =====
+  doc.querySelectorAll('a[href]').forEach(a=>{
+    const parsed = parseAddr(a.getAttribute('href'));
+    if(parsed.type === 'internet'){
+      a.setAttribute('target', '_blank');
+      a.setAttribute('rel', 'noopener');
+    } else if(parsed.type === 'hash'){
+      a.setAttribute('data-hw-path', parsed.path);
+      a.setAttribute('data-hw-hash', parsed.hash);
+      a.removeAttribute('href');
+      a.style.cursor = 'pointer';
+    } else if(parsed.type === 'relative'){
+      a.setAttribute('data-hw-path', parsed.path);
+      a.removeAttribute('href');
+      a.style.cursor = 'pointer';
+    }
   });
 
+  // ===== <link rel="stylesheet" href> — embute CSS =====
   const folhas = Array.from(doc.querySelectorAll('link[rel~="stylesheet"][href]'));
   for(const link of folhas){
-    const href = link.getAttribute('href');
-    if(enderecoExterno(href)) continue;
+    const parsed = parseAddr(link.getAttribute('href'));
+    if(parsed.type === 'internet' || parsed.type === 'skip') continue;
     try{
-      const css = await getFileContent(resolverCaminho(baseDir, href));
+      const css = await fetchText(parsed);
       const style = doc.createElement('style');
       style.textContent = css;
       link.replaceWith(style);
     }catch(e){ /* arquivo não encontrado — deixa o link como está */ }
   }
 
-  // Tags <script src> — o endereço é resolvido a partir do hash/pasta atual
+  // ===== Outros <link href> (favicon, preconnect, etc.) — embute como data URL =====
+  const otherLinks = Array.from(doc.querySelectorAll('link[href]:not([rel~="stylesheet"])'));
+  for(const link of otherLinks){
+    const parsed = parseAddr(link.getAttribute('href'));
+    if(parsed.type !== 'hash' && parsed.type !== 'relative') continue;
+    try{
+      const b64 = await fetchB64(parsed);
+      link.setAttribute('href', 'data:' + mimeFromExt(parsed.path) + ';base64,' + b64);
+    }catch(e){ /* deixa como está */ }
+  }
+
+  // ===== <script src> — embute JS (mesmo site ou outro site da rede) =====
   const scripts = Array.from(doc.querySelectorAll('script[src]'));
   for(const scr of scripts){
-    const src = scr.getAttribute('src');
-    if(enderecoExterno(src)) continue;
+    const parsed = parseAddr(scr.getAttribute('src'));
+    if(parsed.type === 'internet' || parsed.type === 'skip') continue;
     try{
-      const js = await getFileContent(resolverCaminho(baseDir, src));
+      const js = await fetchText(parsed);
       const novo = doc.createElement('script');
+      for(const attr of scr.attributes){ if(attr.name !== 'src') novo.setAttribute(attr.name, attr.value); }
       novo.textContent = js;
       scr.replaceWith(novo);
     }catch(e){ /* arquivo não encontrado — deixa o script como está */ }
   }
 
+  // ===== Tags binárias: img, source, video, audio, embed, object, input[image] =====
+  const binEls = Array.from(doc.querySelectorAll('img[src], source[src], video[src], audio[src], embed[src], object[data], input[type="image"][src]'));
+  for(const el of binEls){
+    const attrName = el.hasAttribute('src') ? 'src' : 'data';
+    const parsed = parseAddr(el.getAttribute(attrName));
+    if(parsed.type !== 'hash' && parsed.type !== 'relative') continue;
+    try{
+      const b64 = await fetchB64(parsed);
+      const mime = el.getAttribute('type') || mimeFromExt(parsed.path);
+      el.setAttribute(attrName, 'data:' + mime + ';base64,' + b64);
+    }catch(e){ /* deixa como está */ }
+  }
+
+  // ===== <iframe src> — embute HTML via srcdoc =====
+  const iframes = Array.from(doc.querySelectorAll('iframe[src]'));
+  for(const iframe of iframes){
+    const parsed = parseAddr(iframe.getAttribute('src'));
+    if(parsed.type !== 'hash' && parsed.type !== 'relative') continue;
+    try{
+      const iframeHtml = await fetchText(parsed);
+      iframe.setAttribute('srcdoc', iframeHtml);
+      iframe.removeAttribute('src');
+    }catch(e){ /* deixa como está */ }
+  }
+
+  // ===== <track src> — embute WebVTT como data URL =====
+  const tracks = Array.from(doc.querySelectorAll('track[src]'));
+  for(const track of tracks){
+    const parsed = parseAddr(track.getAttribute('src'));
+    if(parsed.type !== 'hash' && parsed.type !== 'relative') continue;
+    try{
+      const vtt = await fetchText(parsed);
+      track.setAttribute('src', 'data:text/vtt;base64,' + btoa(unescape(encodeURIComponent(vtt))));
+    }catch(e){ /* deixa como está */ }
+  }
+
+  // ===== srcset (img, source) — resolve cada URL para data URL =====
+  const srcsetEls = Array.from(doc.querySelectorAll('img[srcset], source[srcset]'));
+  for(const el of srcsetEls){
+    const srcset = el.getAttribute('srcset');
+    const parts = srcset.split(',').map(s => s.trim());
+    let changed = false;
+    for(let j=0; j<parts.length; j++){
+      const tokens = parts[j].split(/\s+/);
+      const parsed = parseAddr(tokens[0]);
+      if(parsed.type !== 'hash' && parsed.type !== 'relative') continue;
+      try{
+        const b64 = await fetchB64(parsed);
+        const descriptor = tokens.slice(1).join(' ');
+        parts[j] = 'data:' + mimeFromExt(parsed.path) + ';base64,' + b64 + (descriptor ? ' ' + descriptor : '');
+        changed = true;
+      }catch(e){ /* deixa como está */ }
+    }
+    if(changed) el.setAttribute('srcset', parts.join(', '));
+  }
+
+  // Script de navegação: cliques em links internos notificam o pai (com hash se cross-site)
   const navScript = doc.createElement('script');
   navScript.textContent = `
     document.addEventListener('click', function(e){
       var a = e.target.closest('a[data-hw-path]');
       if(a){
         e.preventDefault();
-        window.parent.postMessage({type:'hashweb-nav', path:a.getAttribute('data-hw-path')}, '*');
+        var data = {type:'hashweb-nav', path:a.getAttribute('data-hw-path')};
+        if(a.getAttribute('data-hw-hash')) data.hash = a.getAttribute('data-hw-hash');
+        window.parent.postMessage(data, '*');
       }
     });
   `;

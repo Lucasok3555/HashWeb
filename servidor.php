@@ -12,6 +12,7 @@
 header('Access-Control-Allow-Origin: *');
 header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
 header('Access-Control-Allow-Headers: Content-Type');
+header('Access-Control-Max-Age: 86400');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') { http_response_code(204); exit; }
 
 $dbFile   = __DIR__ . '/hashweb.db';
@@ -316,6 +317,25 @@ switch ($action) {
         $full = safePath(siteDir($hash), $path);
         if (!is_file($full)) jsonResponse(['error' => 'arquivo não encontrado'], 404);
         jsonResponse(['content' => base64_encode(file_get_contents($full))]);
+    }
+
+    case 'proxy': {
+        $url = $_REQUEST['url'] ?? '';
+        if (!filter_var($url, FILTER_VALIDATE_URL) || !preg_match('#^https?://#i', $url)) {
+            jsonResponse(['error' => 'URL inválida'], 400);
+        }
+        $ctx = stream_context_create(['http' => ['timeout' => 15, 'ignore_errors' => true, 'user_agent' => 'HashWebProxy']]);
+        $content = @file_get_contents($url, false, $ctx);
+        if ($content === false) jsonResponse(['error' => 'falha ao buscar URL'], 502);
+        $contentType = 'application/octet-stream';
+        if (!empty($http_response_header)) {
+            foreach ($http_response_header as $h) {
+                if (preg_match('/^Content-Type:\s*(.+)$/i', $h, $m)) { $contentType = trim($m[1]); break; }
+            }
+        }
+        header('Content-Type: ' . $contentType);
+        echo $content;
+        exit;
     }
 
     default:
