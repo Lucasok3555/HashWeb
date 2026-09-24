@@ -1,0 +1,19 @@
+services:
+  web:
+    image: php:8.2-apache
+    ports:
+      - "3000:80"
+    volumes:
+      - ./:/var/www/html
+    working_dir: /var/www/html
+    command: >
+      bash -c "
+      apt-get update && apt-get install -y libsqlite3-dev &&
+      docker-php-ext-install pdo_sqlite &&
+      chmod -R a+rX /var/www/html &&
+      chmod -R a+w /var/www/html &&
+      printf '<Directory /var/www/html>\n    AllowOverride None\n    Require all granted\n</Directory>\n' > /etc/apache2/conf-available/hashweb.conf &&
+      a2enconf hashweb &&
+      apache2-foreground
+      "
+    restart: unless-stopped
