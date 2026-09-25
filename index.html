@@ -428,11 +428,19 @@ async function getFileSmart(server, hash, path, key){
   const attempts = [];
   if(key){ const sp = scramblePath(path, key); if(sp !== path) attempts.push(sp); }
   attempts.push(path);
+  // Tenta o servidor conhecido primeiro
   for(const tryPath of attempts){
     try {
       if(server) return {server, data: await apiOn(server, 'get_file', {hash, path: tryPath})};
       return await apiAny('get_file', {hash, path: tryPath});
-    } catch(e){ /* tenta próximo */ }
+    } catch(e){ /* tenta próximo path */ }
+  }
+  // Fallback: o site pode estar distribuído — tenta todos os servidores
+  if(server){
+    for(const tryPath of attempts){
+      try { return await apiAny('get_file', {hash, path: tryPath}); }
+      catch(e){ /* tenta próximo path */ }
+    }
   }
   throw new Error('arquivo não encontrado');
 }
@@ -632,6 +640,13 @@ async function montarPaginaLocal(htmlText, hash, currentPath, server){
         return (await apiAny('get_file', {hash:siteHash, path:tryPath})).data.content;
       } catch(e){ /* tenta próximo */ }
     }
+    // Fallback: tenta todos os servidores (o site pode estar distribuído)
+    if(siteServer){
+      for(const tryPath of attempts){
+        try { return (await apiAny('get_file', {hash:siteHash, path:tryPath})).data.content; }
+        catch(e){}
+      }
+    }
     throw new Error('not found');
   }
 
@@ -649,6 +664,13 @@ async function montarPaginaLocal(htmlText, hash, currentPath, server){
         if(siteServer) return (await apiOn(siteServer, 'get_file_b64', {hash:siteHash, path:tryPath})).content;
         return (await apiAny('get_file_b64', {hash:siteHash, path:tryPath})).data.content;
       } catch(e){ /* tenta próximo */ }
+    }
+    // Fallback: tenta todos os servidores (o site pode estar distribuído)
+    if(siteServer){
+      for(const tryPath of attempts){
+        try { return (await apiAny('get_file_b64', {hash:siteHash, path:tryPath})).data.content; }
+        catch(e){}
+      }
     }
     throw new Error('not found');
   }
@@ -804,30 +826,37 @@ function criarSite(){
   const name = document.getElementById('new-site-name').value.trim();
   if(!name){ toast('Informe um nome para o site.'); return; }
   if(servers.length===0){ toast('Cadastre um servidor primeiro (aba Servidores).'); return; }
-  // Novos sites são criados no primeiro servidor da lista.
-  const server = servers[0];
-  apiOn(server, 'create_site', {name}, 'POST').then(async data=>{
-    mySites.push({hash:data.hash, name:data.name, private_key:data.private_key, server});
+  // Cria no primeiro servidor (gera a chave), depois replica para todos os outros.
+  const primaryServer = servers[0];
+  apiOn(primaryServer, 'create_site', {name}, 'POST').then(async data=>{
+    mySites.push({hash:data.hash, name:data.name, private_key:data.private_key, server:primaryServer});
     saveSites();
-    // Criar index.html inicial (com path ofuscado)
     const key = getScrambleKey(data.private_key);
     const indexContent = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'
       + escapeHtml(name) + '</title>\n</head>\n<body>\n<h1>' + escapeHtml(name)
       + '</h1>\n</body>\n</html>\n';
-    try {
-      await fmApi(server, 'upload_file', {
-        hash: data.hash, private_key: data.private_key,
-        path: '/', name: 'index.html',
-        content: btoa(unescape(encodeURIComponent(indexContent)))
-      }, 'POST', key);
-    } catch(e){ /* non-fatal — o site existe mesmo sem index.html */ }
+    const indexB64 = btoa(unescape(encodeURIComponent(indexContent)));
+    // Importar o site e enviar index.html para TODOS os servidores da lista
+    for(const srv of servers){
+      if(srv !== primaryServer){
+        try { await apiOn(srv, 'import_site', {name, private_key: data.private_key}, 'POST'); }
+        catch(e){ /* servidor indisponível — non-fatal */ }
+      }
+      try {
+        await fmApi(srv, 'upload_file', {
+          hash: data.hash, private_key: data.private_key,
+          path: '/', name: 'index.html',
+          content: indexB64
+        }, 'POST', key);
+      } catch(e){ /* non-fatal — o site existe mesmo sem index.html */ }
+    }
     document.getElementById('new-site-key').classList.add('show');
     const val = document.getElementById('new-site-key-val');
     val.textContent = data.private_key;
     val.onclick = ()=> { navigator.clipboard.writeText(data.private_key); toast('Chave copiada.'); };
     document.getElementById('new-site-name').value = '';
     renderSitesList();
-    toast('Site criado em ' + server);
+    toast('Site criado em ' + servers.length + ' servidor(es).');
   }).catch(e=> toast('Erro: ' + e.message));
 }
 
@@ -1179,15 +1208,23 @@ async function sincronizarRede(site){
   const otherServers = servers.filter(s => s !== site.server);
   if(otherServers.length === 0){ toast('Não há outros servidores para replicar.'); return; }
   const key = getScrambleKey(site.private_key);
+  // Descobrir quais servidores AINDA NÃO têm o site (servidores novos na lista)
+  const newServers = [];
+  for(const srv of otherServers){
+    try {
+      const result = await apiOn(srv, 'import_site', {name: site.name, private_key: site.private_key}, 'POST');
+      if(!result.exists) newServers.push(srv);
+    } catch(e){ /* servidor indisponível — pula */ }
+  }
+  if(newServers.length === 0){ toast('Todos os servidores já têm este site.'); return; }
   toast('Listando arquivos...');
   let files;
   try { files = await listAllFiles(site.server, site.hash, key); }
   catch(e){ toast('Erro ao listar arquivos: ' + e.message); return; }
   if(files.length === 0){ toast('Site vazio — nada para replicar.'); return; }
-  for(const server of otherServers){
+  for(const server of newServers){
     toast('Replicando para ' + server + '...');
     try {
-      await apiOn(server, 'import_site', {name: site.name, private_key: site.private_key}, 'POST');
       for(const file of files){
         const scrambledPath = scramblePath(file.path, key);
         const data = await apiOn(site.server, 'get_file_b64', {hash: site.hash, path: scrambledPath});
@@ -1201,7 +1238,7 @@ async function sincronizarRede(site){
       toast('Replicado para ' + server);
     } catch(e){ toast('Erro ao replicar para ' + server + ': ' + e.message); }
   }
-  toast('Sincronização concluída para ' + otherServers.length + ' servidor(es).');
+  toast('Sincronização concluída para ' + newServers.length + ' servidor(es) novo(s).');
 }
 
 document.getElementById('btn-sync-rede').addEventListener('click', ()=>{
