@@ -840,8 +840,8 @@ function criarSite(){
     saveSites();
     const key = getScrambleKey(data.private_key);
     const indexContent = '<!DOCTYPE html>\n<html>\n<head>\n<meta charset="utf-8">\n<title>'
-      + escapeHtml(name) + '</title>\n</head>\n<body>\n<h1>' + escapeHtml(name)
-      + '</h1>\n</body>\n</html>\n';
+      + escapeHtml(name) + '<\/title>\n<\/head>\n<body>\n<h1>' + escapeHtml(name)
+      + '<\/h1>\n<\/body>\n<\/html>\n';
     const indexB64 = btoa(unescape(encodeURIComponent(indexContent)));
     // Importar o site e enviar index.html para TODOS os servidores da lista
     for(const srv of servers){
