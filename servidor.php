@@ -7,6 +7,10 @@
  * Rotas:
  *   GET  servidor.php/raw/{hash}/{caminho}   -> serve o arquivo cru do site
  *   *    servidor.php?action=...             -> API JSON (ver switch abaixo)
+ *
+ * Ações de rede:
+ *   register_server / list_servers           -> diretório compartilhado de servidores
+ *   post_interaction / list_interactions     -> funções interativas de um site (públicas)
  */
 
 header('Access-Control-Allow-Origin: *');
@@ -28,6 +32,17 @@ $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
 $pdo->exec("CREATE TABLE IF NOT EXISTS sites (
     hash TEXT PRIMARY KEY,
     name TEXT NOT NULL,
+    created_at TEXT NOT NULL
+)");
+$pdo->exec("CREATE TABLE IF NOT EXISTS servers (
+    url TEXT PRIMARY KEY,
+    created_at TEXT NOT NULL
+)");
+$pdo->exec("CREATE TABLE IF NOT EXISTS interactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    hash TEXT NOT NULL,
+    author TEXT NOT NULL,
+    message TEXT NOT NULL,
     created_at TEXT NOT NULL
 )");
 
@@ -62,6 +77,17 @@ function verifyOwner($hash, $privateKey) {
     if (!$privateKey || !hash_equals($hash, hash('sha256', $privateKey))) {
         jsonResponse(['error' => 'chave privada inválida'], 403);
     }
+}
+
+// Aceita qualquer endereço informado: sem protocolo vira http:// e endereço sem
+// arquivo .php recebe /servidor.php. Nada é bloqueado por política.
+function normalizeServerUrl($url) {
+    $url = trim((string) $url);
+    if ($url === '') return '';
+    if (!preg_match('#^[a-z][a-z0-9+.-]*://#i', $url)) $url = 'http://' . $url;
+    $url = rtrim($url, '/');
+    if (!preg_match('#\.php(\?.*)?$#i', $url)) $url .= '/servidor.php';
+    return $url;
 }
 
 function deleteDirRecursive($dir) {
@@ -344,6 +370,45 @@ switch ($action) {
         header('Content-Type: ' . $contentType);
         echo $content;
         exit;
+    }
+
+    // ---------- diretório compartilhado de servidores ----------
+
+    case 'register_server': {
+        $url = normalizeServerUrl($_POST['url'] ?? '');
+        if ($url === '') jsonResponse(['error' => 'endereço do servidor é obrigatório'], 400);
+        $stmt = $pdo->prepare('INSERT OR IGNORE INTO servers (url, created_at) VALUES (?, ?)');
+        $stmt->execute([$url, date('c')]);
+        jsonResponse(['ok' => true, 'url' => $url]);
+    }
+
+    case 'list_servers': {
+        $rows = $pdo->query('SELECT url, created_at FROM servers ORDER BY created_at, url')->fetchAll(PDO::FETCH_ASSOC);
+        jsonResponse(['servers' => $rows]);
+    }
+
+    // ---------- funções interativas (públicas: qualquer visitante interage) ----------
+
+    case 'post_interaction': {
+        $hash = $_POST['hash'] ?? '';
+        if (!preg_match('/^[a-f0-9]{64}$/', $hash)) jsonResponse(['error' => 'hash inválido'], 400);
+        $message = trim($_POST['message'] ?? '');
+        if ($message === '') jsonResponse(['error' => 'mensagem é obrigatória'], 400);
+        if (strlen($message) > 2000) jsonResponse(['error' => 'mensagem muito longa'], 400);
+        $author = trim($_POST['author'] ?? '');
+        if ($author === '') $author = 'anônimo';
+        if (strlen($author) > 60) $author = substr($author, 0, 60);
+        $stmt = $pdo->prepare('INSERT INTO interactions (hash, author, message, created_at) VALUES (?, ?, ?, ?)');
+        $stmt->execute([$hash, $author, $message, date('c')]);
+        jsonResponse(['ok' => true, 'id' => (int) $pdo->lastInsertId()]);
+    }
+
+    case 'list_interactions': {
+        $hash = $_REQUEST['hash'] ?? '';
+        if (!preg_match('/^[a-f0-9]{64}$/', $hash)) jsonResponse(['error' => 'hash inválido'], 400);
+        $stmt = $pdo->prepare('SELECT id, author, message, created_at FROM interactions WHERE hash = ? ORDER BY id DESC LIMIT 200');
+        $stmt->execute([$hash]);
+        jsonResponse(['items' => array_reverse($stmt->fetchAll(PDO::FETCH_ASSOC))]);
     }
 
     default:

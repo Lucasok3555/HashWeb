@@ -190,6 +190,30 @@
   .modal.fullscreen .modal-body{ flex:1; min-height:0; }
   .modal.fullscreen .modal textarea{ flex:1; min-height:0; height:100%; resize:none; }
 
+  /* Editor com número de linha: calha sincronizada com a rolagem do código */
+  .editor-wrap{ display:flex; flex:1; min-height:0; border:1px solid var(--line); border-radius:2px; overflow:hidden; background:var(--bg2); }
+  .editor-lines{
+    flex:0 0 auto; padding:9px 8px 9px 10px; margin:0; overflow:hidden; white-space:pre;
+    background:var(--panel); border-right:1px solid var(--line); text-align:right;
+    color:var(--text-dim); font-family:'Share Tech Mono', monospace; font-size:13px;
+    line-height:1.5; user-select:none;
+  }
+  .editor-wrap textarea{
+    flex:1; min-height:0; height:100%; border:none; border-radius:0; resize:none;
+    white-space:pre; overflow:auto; font-family:'Share Tech Mono', monospace; font-size:13px; line-height:1.5;
+  }
+
+  /* ---------- Diretório de servidores / Interações ---------- */
+  #dir-list{display:flex; flex-direction:column; gap:8px; margin-top:14px;}
+  .inter-lista{
+    display:flex; flex-direction:column; gap:8px; padding:8px; max-height:260px; overflow-y:auto;
+    background:var(--bg2); border:1px solid var(--line); border-radius:2px;
+  }
+  .inter-item{border-bottom:1px dashed var(--line); padding-bottom:6px; font-size:12px;}
+  .inter-item .autor{color:var(--neon); font-weight:600; margin-right:8px;}
+  .inter-item .quando{color:var(--text-dim); font-size:10px;}
+  .inter-item .inter-txt{margin-top:4px; word-break:break-word;}
+
   /* ---------- Loading ---------- */
   .fm-loading{ display:flex; align-items:center; justify-content:center; padding:40px; color:var(--text-dim); gap:10px; font-size:13px; }
   .fm-loading .spinner{ width:18px; height:18px; border:2px solid var(--neon-dim); border-top-color:var(--neon); border-radius:50%; animation:spin 1s linear infinite; }
@@ -230,6 +254,7 @@
     .modal{ width:96vw; max-height:92vh; }
     .modal-body{ padding:12px; }
     .modal textarea{ min-height:200px; font-size:12px; }
+    .editor-lines{ font-size:12px; }
     .modal-foot{ flex-wrap:wrap; }
     .modal-foot button{ flex:1; }
 
@@ -315,7 +340,7 @@
     <div class="card">
       <h3>Adicionar servidor</h3>
       <div class="row">
-        <input id="new-server-url" type="text" placeholder="https://exemplo.com/servidor.php">
+        <input id="new-server-url" type="text" placeholder="qualquer endereço: 192.168.0.10:8080 ou https://site.com/servidor.php">
         <button class="btn" id="btn-add-server">Adicionar</button>
       </div>
     </div>
@@ -323,6 +348,12 @@
       <h3>Servidores</h3>
       <div class="row"><button class="btn small" id="btn-test-servers">Testar todos</button></div>
       <div id="servers-list"></div>
+    </div>
+
+    <div class="card">
+      <h3>Diretório de servidores</h3>
+      <div class="row"><button class="btn small" id="btn-dir-atualizar">Atualizar diretório</button></div>
+      <div id="dir-list"></div>
     </div>
   </section>
 
@@ -894,6 +925,7 @@ function renderSitesList(){
       <span class="name">${escapeHtml(site.name)}</span>
       <button class="btn small" data-act="abrir">Arquivos</button>
       <button class="btn small" data-act="sincronizar">Sincronizar</button>
+      <button class="btn small" data-act="interagir">Interagir</button>
       <button class="btn small" data-act="editar">Renomear</button>
       <button class="btn small" data-act="chave">Ver chave</button>
       <button class="btn small danger" data-act="apagar">Apagar</button>
@@ -901,6 +933,7 @@ function renderSitesList(){
     `;
     div.querySelector('[data-act="abrir"]').addEventListener('click', ()=> openFileManager(site));
     div.querySelector('[data-act="sincronizar"]').addEventListener('click', ()=> sincronizarRede(site));
+    div.querySelector('[data-act="interagir"]').addEventListener('click', ()=> abrirInteracoes(site));
     div.querySelector('[data-act="editar"]').addEventListener('click', ()=> renomearSite(site));
     div.querySelector('[data-act="chave"]').addEventListener('click', ()=>{
       navigator.clipboard.writeText(site.private_key);
@@ -1029,7 +1062,9 @@ document.getElementById('btn-nova-pasta').addEventListener('click', ()=>{
     {label:'Criar', cls:'', onClick: ()=>{
       const name = document.getElementById('m-folder-name').value.trim();
       if(!name) return;
-      fmApi(fmSite.server, 'create_folder', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
+      const params = {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name};
+      fmApi(fmSite.server, 'create_folder', params, 'POST').then(()=>{
+        replicarOperacao('create_folder', params, 'POST', fmSite.server);
         closeModal(); loadFiles(); toast('Pasta criada.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -1045,7 +1080,9 @@ document.getElementById('btn-novo-arquivo').addEventListener('click', ()=>{
     {label:'Criar', cls:'', onClick: ()=>{
       const name = document.getElementById('m-file-name').value.trim();
       if(!name) return;
-      fmApi(fmSite.server, 'create_file', {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name}, 'POST').then(()=>{
+      const params = {hash:fmSite.hash, private_key:fmSite.private_key, path:fmPath, name};
+      fmApi(fmSite.server, 'create_file', params, 'POST').then(()=>{
+        replicarOperacao('create_file', params, 'POST', fmSite.server);
         closeModal(); loadFiles(); toast('Arquivo criado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -1053,21 +1090,45 @@ document.getElementById('btn-novo-arquivo').addEventListener('click', ()=>{
 });
 
 // Editor de arquivo em tela cheia: as alterações só valem depois de Salvar.
+// A calha da esquerda mostra o número de cada linha do código.
 function abrirEditor(path){
   fmApi(fmSite.server, 'get_file', {hash:fmSite.hash, path}).then(data=>{
     openModal('Editar: ' + path, `
       <div class="msg ok show" id="m-editor-status">Alterações ainda não salvas — clique em "Salvar alterações".</div>
-      <textarea id="m-editor">${escapeHtml(data.content)}</textarea>
+      <div class="editor-wrap">
+        <div class="editor-lines" id="m-editor-lines">1</div>
+        <textarea id="m-editor" wrap="off" spellcheck="false">${escapeHtml(data.content)}</textarea>
+      </div>
     `, [
       {label:'Cancelar', cls:'', onClick: closeModal},
       {label:'💾 Salvar alterações', cls:'', onClick: ()=>{
         const content = document.getElementById('m-editor').value;
-        fmApi(fmSite.server, 'save_file', {hash:fmSite.hash, private_key:fmSite.private_key, path, content}, 'POST').then(()=>{
+        const params = {hash:fmSite.hash, private_key:fmSite.private_key, path, content};
+        fmApi(fmSite.server, 'save_file', params, 'POST').then(()=>{
+          replicarOperacao('save_file', params, 'POST', fmSite.server);
           closeModal(); toast('Arquivo salvo no servidor.');
         }).catch(e=> toast('Erro: ' + e.message));
       }}
     ], true);
+    ligarNumeroDaLinha();
   }).catch(e=> toast('Erro: ' + e.message));
+}
+
+// Mantém a numeração das linhas em sincronia com o texto e com a rolagem.
+function ligarNumeroDaLinha(){
+  const ta = document.getElementById('m-editor');
+  const gutter = document.getElementById('m-editor-lines');
+  if(!ta || !gutter) return;
+  function atualizar(){
+    const linhas = ta.value.split('\n').length;
+    let texto = '';
+    for(let i = 1; i <= linhas; i++) texto += i + '\n';
+    gutter.textContent = texto;
+    gutter.scrollTop = ta.scrollTop;
+  }
+  ta.addEventListener('input', atualizar);
+  ta.addEventListener('scroll', atualizar);
+  atualizar();
 }
 
 function renomearItem(path, currentName){
@@ -1079,7 +1140,9 @@ function renomearItem(path, currentName){
     {label:'Salvar', cls:'', onClick: ()=>{
       const newName = document.getElementById('m-rename').value.trim();
       if(!newName) return;
-      fmApi(fmSite.server, 'rename', {hash:fmSite.hash, private_key:fmSite.private_key, path, new_name:newName}, 'POST').then(()=>{
+      const params = {hash:fmSite.hash, private_key:fmSite.private_key, path, new_name:newName};
+      fmApi(fmSite.server, 'rename', params, 'POST').then(()=>{
+        replicarOperacao('rename', params, 'POST', fmSite.server);
         closeModal(); loadFiles(); toast('Renomeado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -1098,7 +1161,9 @@ function moverOuCopiar(path, action){
     {label, cls:'', onClick: ()=>{
       const raw = document.getElementById('m-dest').value.trim();
       const dest = raw === '' ? fmPath : raw;
-      fmApi(fmSite.server, action, {hash:fmSite.hash, private_key:fmSite.private_key, path, dest}, 'POST').then(()=>{
+      const params = {hash:fmSite.hash, private_key:fmSite.private_key, path, dest};
+      fmApi(fmSite.server, action, params, 'POST').then(()=>{
+        replicarOperacao(action, params, 'POST', fmSite.server);
         closeModal(); loadFiles(); toast(label + ' concluído — pasta de destino: ' + dest);
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -1109,7 +1174,9 @@ function apagarItem(path){
   openModal('Apagar', `<div>Apagar "${escapeHtml(path)}"? Esta ação não pode ser desfeita.</div>`, [
     {label:'Cancelar', cls:'', onClick: closeModal},
     {label:'Apagar', cls:'danger', onClick: ()=>{
-      fmApi(fmSite.server, 'delete', {hash:fmSite.hash, private_key:fmSite.private_key, path}, 'POST').then(()=>{
+      const params = {hash:fmSite.hash, private_key:fmSite.private_key, path};
+      fmApi(fmSite.server, 'delete', params, 'POST').then(()=>{
+        replicarOperacao('delete', params, 'POST', fmSite.server);
         closeModal(); loadFiles(); toast('Apagado.');
       }).catch(e=> toast('Erro: ' + e.message));
     }}
@@ -1153,10 +1220,12 @@ fileInput.addEventListener('change', async ()=>{
   for(const file of files){
     try {
       const base64 = await readFileAsBase64(file);
-      await fmApi(fmSite.server, 'upload_file', {
+      const params = {
         hash: fmSite.hash, private_key: fmSite.private_key,
         path: fmPath, name: file.name, content: base64
-      }, 'POST');
+      };
+      await fmApi(fmSite.server, 'upload_file', params, 'POST');
+      await replicarOperacao('upload_file', params, 'POST', fmSite.server);
     } catch(e){ toast('Erro ao enviar ' + file.name + ': ' + e.message); }
   }
   fileInput.value = '';
@@ -1178,10 +1247,12 @@ folderInput.addEventListener('change', async ()=>{
     const targetDir = dirPart ? joinPath(fmPath, dirPart) : fmPath;
     try {
       const base64 = await readFileAsBase64(file);
-      await fmApi(fmSite.server, 'upload_file', {
+      const params = {
         hash: fmSite.hash, private_key: fmSite.private_key,
         path: targetDir, name: fileName, content: base64
-      }, 'POST');
+      };
+      await fmApi(fmSite.server, 'upload_file', params, 'POST');
+      await replicarOperacao('upload_file', params, 'POST', fmSite.server);
     } catch(e){ toast('Erro ao enviar ' + fileName + ': ' + e.message); }
   }
   folderInput.value = '';
@@ -1248,6 +1319,46 @@ async function sincronizarRede(site){
   toast('Sincronização concluída para ' + newServers.length + ' servidor(es) novo(s).');
 }
 
+// Toda alteração feita em um servidor é repetida automaticamente nos outros
+// servidores da lista: o padrão é manter os mesmos arquivos em todos.
+async function replicarOperacao(action, params, method, origem){
+  const alvos = servers.filter(s => s !== origem);
+  await Promise.all(alvos.map(srv =>
+    fmApi(srv, action, params, method).catch(()=>{ /* servidor fora do ar ou sem o site */ })
+  ));
+}
+
+// Copia todos os arquivos de um site para um servidor novo da lista.
+async function copiarArquivosDoSite(site, destino){
+  const key = getScrambleKey(site.private_key);
+  let files;
+  try { files = await listAllFiles(site.server, site.hash, key); }
+  catch(e){ return; }
+  for(const file of files){
+    try {
+      const scrambledPath = scramblePath(file.path, key);
+      const data = await apiOn(site.server, 'get_file_b64', {hash: site.hash, path: scrambledPath});
+      await apiOn(destino, 'upload_file', {
+        hash: site.hash, private_key: site.private_key,
+        path: scrambledPath.replace(/[^/]*$/, ''), name: scrambledPath.split('/').pop(), content: data.content
+      }, 'POST');
+    } catch(e){ /* arquivo indisponível — segue com os outros */ }
+  }
+}
+
+// Servidor novo na lista: copia TODOS os arquivos de TODOS os sites para ele.
+async function replicarTodosOsSites(destino){
+  if(mySites.length === 0) return;
+  toast('Copiando arquivos para ' + destino + '...');
+  for(const site of mySites){
+    if(site.server === destino) continue;
+    try { await apiOn(destino, 'import_site', {name: site.name, private_key: site.private_key}, 'POST'); }
+    catch(e){ /* servidor indisponível */ }
+    await copiarArquivosDoSite(site, destino);
+  }
+  toast('Arquivos copiados para o servidor novo.');
+}
+
 document.getElementById('btn-sync-rede').addEventListener('click', ()=>{
   if(fmSite) sincronizarRede(fmSite);
 });
@@ -1256,18 +1367,94 @@ document.getElementById('btn-sync-rede').addEventListener('click', ()=>{
 // Não existe mais "servidor ativo": o cliente usa TODOS os servidores da lista,
 // tentando um de cada vez (na ordem cadastrada) para achar/gravar informação.
 // Se um servidor estiver fora do ar ou não tiver o dado, o próximo é tentado.
-document.getElementById('btn-add-server').addEventListener('click', ()=>{
-  const input = document.getElementById('new-server-url');
-  let url = input.value.trim();
-  if(!url){ toast('Informe o endereço do servidor.'); return; }
-  url = url.replace(/\/$/, '');
-  if(servers.includes(url)){ toast('Servidor já adicionado.'); return; }
+// Aceita QUALQUER endereço digitado: sem protocolo vira http://, endereço sem
+// arquivo .php recebe /servidor.php no final. Nada é bloqueado por política.
+function normalizarEndereco(raw){
+  let url = (raw || '').trim();
+  if(!url) return '';
+  if(!/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = 'http://' + url;
+  url = url.replace(/\/+$/, '');
+  if(!/\.php(\?.*)?$/i.test(url)) url += '/servidor.php';
+  return url;
+}
+
+// Se esta página foi servida por um servidor.php local, ele vira o servidor
+// padrão da lista e é quem guarda o diretório compartilhado de servidores.
+function servidorLocal(){
+  return location.protocol === 'http:' || location.protocol === 'https:' ? location.origin + '/servidor.php' : null;
+}
+
+async function detectarServidorLocal(){
+  const local = servidorLocal();
+  if(!local) return;
+  try {
+    const data = await apiOn(local, 'status');
+    if(!data || !data.ok) return;
+    if(!servers.includes(local)){ servers.unshift(local); saveServers(); renderServersList(); }
+    carregarDiretorio();
+  } catch(e){ /* não há servidor local — segue só com os da lista */ }
+}
+
+// Todo servidor colocado na lista entra no diretório (visível para todos) e
+// recebe uma cópia de todos os arquivos dos sites do cliente.
+function adicionarServidor(url, opts){
+  opts = opts || {};
+  if(!url) return false;
+  if(servers.includes(url)){ toast('Servidor já adicionado.'); return false; }
   servers.push(url);
   saveServers();
-  input.value = '';
   renderServersList();
   toast('Servidor adicionado.');
+  if(opts.registrar !== false) registrarNoDiretorio(url);
+  replicarTodosOsSites(url);
+  return true;
+}
+
+document.getElementById('btn-add-server').addEventListener('click', ()=>{
+  const input = document.getElementById('new-server-url');
+  const url = normalizarEndereco(input.value);
+  if(!url){ toast('Informe o endereço do servidor.'); return; }
+  if(adicionarServidor(url)) input.value = '';
 });
+
+// ---------- diretório compartilhado de servidores ----------
+async function registrarNoDiretorio(url){
+  const local = servidorLocal();
+  try {
+    if(local) await apiOn(local, 'register_server', {url}, 'POST');
+    else await apiAny('register_server', {url}, 'POST');
+    carregarDiretorio();
+  } catch(e){ /* diretório fora do ar — não é fatal */ }
+}
+
+async function carregarDiretorio(){
+  const el = document.getElementById('dir-list');
+  if(!el) return;
+  el.innerHTML = '<div class="empty-msg">Carregando diretório...</div>';
+  const local = servidorLocal();
+  let data;
+  try {
+    data = local ? await apiOn(local, 'list_servers') : await apiAny('list_servers');
+  } catch(e){
+    el.innerHTML = '<div class="empty-msg">Diretório indisponível.</div>'; return;
+  }
+  const lista = (data && data.servers) || [];
+  if(lista.length === 0){ el.innerHTML = '<div class="empty-msg">Nenhum servidor no diretório ainda.</div>'; return; }
+  el.innerHTML = '';
+  lista.forEach(item=>{
+    const url = item.url;
+    const jaTenho = servers.includes(url);
+    const div = document.createElement('div');
+    div.className = 'server-item';
+    div.innerHTML = `
+      <span class="url">${escapeHtml(url)}</span>
+      <button class="btn small" data-act="usar" ${jaTenho ? 'disabled' : ''}>${jaTenho ? 'Na lista' : 'Adicionar'}</button>
+    `;
+    if(!jaTenho) div.querySelector('[data-act="usar"]').addEventListener('click', ()=>{ adicionarServidor(url, {registrar:false}); carregarDiretorio(); });
+    el.appendChild(div);
+  });
+}
+document.getElementById('btn-dir-atualizar').addEventListener('click', carregarDiretorio);
 
 function renderServersList(){
   const el = document.getElementById('servers-list');
@@ -1342,6 +1529,50 @@ function removerServidor(url){
   ]);
 }
 
+// ===================== INTERAÇÕES =====================
+// Funções interativas: outras pessoas podem deixar e ver mensagens de um site
+// (o servidor expõe as ações públicas list_interactions / post_interaction).
+function abrirInteracoes(site){
+  const servidor = site.server || servers[0] || '';
+  openModal('Interações — ' + site.name, `
+    <div class="field-lbl">Mensagens deixadas no site</div>
+    <div class="inter-lista" id="m-inter-lista"><div class="empty-msg">Carregando...</div></div>
+    <div class="field-lbl">Deixe sua mensagem</div>
+    <div class="row">
+      <input id="m-inter-nome" type="text" placeholder="Seu nome" style="flex:0 1 140px;">
+      <input id="m-inter-msg" type="text" placeholder="Mensagem" style="flex:1;">
+      <button class="btn small" id="m-inter-enviar">Enviar</button>
+    </div>
+  `, [{label:'Fechar', cls:'', onClick: closeModal}]);
+
+  const lista = document.getElementById('m-inter-lista');
+  async function atualizar(){
+    try {
+      const data = await apiOn(servidor, 'list_interactions', {hash: site.hash});
+      const itens = data.items || [];
+      if(itens.length === 0){ lista.innerHTML = '<div class="empty-msg">Nenhuma interação ainda.</div>'; return; }
+      lista.innerHTML = itens.map(it => `
+        <div class="inter-item">
+          <span class="autor">${escapeHtml(it.author)}</span>
+          <span class="quando">${escapeHtml(new Date(it.created_at).toLocaleString())}</span>
+          <div class="inter-txt">${escapeHtml(it.message)}</div>
+        </div>
+      `).join('');
+    } catch(e){ lista.innerHTML = '<div class="empty-msg">Servidor indisponível.</div>'; }
+  }
+  document.getElementById('m-inter-enviar').addEventListener('click', async ()=>{
+    const autor = document.getElementById('m-inter-nome').value.trim();
+    const texto = document.getElementById('m-inter-msg').value.trim();
+    if(!texto){ toast('Escreva uma mensagem.'); return; }
+    try {
+      await apiOn(servidor, 'post_interaction', {hash: site.hash, author: autor, message: texto}, 'POST');
+      document.getElementById('m-inter-msg').value = '';
+      atualizar();
+    } catch(e){ toast('Erro: ' + e.message); }
+  });
+  atualizar();
+}
+
 // ===================== MODAL =====================
 function openModal(title, bodyHtml, buttons, fullscreen){
   document.getElementById('modal-title').textContent = title;
@@ -1368,6 +1599,7 @@ function escapeHtml(str){
 
 // ---------- inicialização ----------
 renderServersList();
+detectarServidorLocal();
 
 })();
 </script>

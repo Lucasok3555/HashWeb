@@ -33,6 +33,19 @@ terminated mid-string and the rest of the JS is rendered on the page as text, wi
 Keep HTML end tags inside JS strings escaped (`'<\/body>'`, `'<\/head>'`, `'<\/html>'`) so no closing tag
 appears as raw text in the document. The same rule applies to `</script>` in any inline string.
 
+## Network features (frontend + `servidor.php`)
+- **Server directory**: the local `servidor.php` (the origin serving the page) stores the shared server
+  list in the `servers` table; every address added to the client list is registered there via
+  `register_server`, and the "Diretório de servidores" card reads it with `list_servers`.
+- **Default server**: on load the page probes `location.origin + '/servidor.php'` (`action=status`) and
+  adds it to the list when it answers.
+- **Automatic replication**: every file change (save, create, rename, move/copy, delete, upload) is
+  repeated on all other servers in the list, and adding a server copies all files of all sites to it.
+- **Interactions**: `post_interaction` / `list_interactions` are public (no private key) so visitors —
+  including pages hosted on other origins — can interact with a site.
+- Address input accepts anything: missing protocol becomes `http://`, an address without a `.php` file
+  gets `/servidor.php` appended.
+
 ## Verifying
 - Frontend: `curl -s http://localhost:3000/` returns the HashWeb HTML.
 - API: `curl -s "http://localhost:3000/servidor.php?action=status"` → `{"ok":true,"status":"online",...}`.
