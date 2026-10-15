@@ -1,0 +1,4 @@
+# Runtime data created by servidor.php (SQLite DB + hosted site files).
+# Not source: keep it out of version control.
+hashweb.db
+sites/
